@@ -78,7 +78,8 @@ don't expect it to enforce one for you.
 ## Run the example
 
 ```bash
-python examples/momentum_rotation.py path/to/your_prices.xlsx
+python examples/momentum_rotation.py                     # uses the bundled data feed below
+python examples/momentum_rotation.py path/to/your_prices.xlsx   # or point it at your own
 ```
 
 The example implements a Clenow "Stocks on the Move"-style ranking (90-day
@@ -87,6 +88,25 @@ a cross-sectional rotation across whatever columns your price file has. It
 prints metrics for both the causally-correct run and, for comparison, a
 deliberately-broken same-bar replay — so you can see the size of the leak on
 your own data before trusting any number.
+
+## Bundled data feed (hardcoded default, as of now)
+
+`data/Indices_Historical_Data.xlsx` is checked into this repo and is the
+default the example runs against when called with no arguments. Two sheets:
+
+- **Broad Market** — NIFTY cap-segment indices (50 / 100 / 200 / 500 /
+  Midcap 100 / Midcap 150 / Smallcap 100 / Smallcap 250 / Midsmallcap 400 /
+  Microcap 250)
+- **Factor Indices** — NIFTY smart-beta sleeves (Alpha 50, 500-Momentum 50,
+  Multifactor MQVLV 50, 500-Quality 50, 500-Value 50, 500-Low-Vol 50,
+  High-Beta 50, 200-Value 30, 200-Momentum 30, 200-Quality 30)
+
+The example trades a curated, non-redundant 10-index subset of these (see
+`UNIVERSE` in `examples/momentum_rotation.py`) against NIFTY 500 as
+benchmark/regime reference — **these are index series, not individual
+stocks**, so this is a sleeve-rotation strategy, not a stock-picker, however
+the ranking logic is dressed up. Swap in your own file any time; nothing in
+the engine or allocators is tied to this data.
 
 ## Tests
 

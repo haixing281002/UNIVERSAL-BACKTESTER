@@ -73,13 +73,29 @@ def load_banner_workbook(path: str, sheet="Sheet1") -> Tuple[pd.DataFrame, Dict[
             current_name = re.sub(r"\s+", " ", nm.strip())
             blocks.setdefault(current_name, [])
         fld = raw.iat[date_row, c]
+        # A column with no real field label (e.g. a spacer that happens to
+        # carry a stray value) must NOT be defaulted to a guessed field name
+        # -- an earlier version of this defaulted unlabeled columns to
+        # "Close", which let a near-empty stray spacer column silently
+        # overwrite a real Close series later (same dict key, last write
+        # wins). Skip anything without a genuine string field label instead.
+        if not (isinstance(fld, str) and fld.strip()):
+            continue
         vals = pd.to_numeric(raw.iloc[date_row + 1:, c], errors="coerce")
         if vals.notna().sum() == 0 or current_name is None:
             continue
-        blocks[current_name].append((str(fld).strip() if isinstance(fld, str) else "Close", vals))
+        blocks[current_name].append((fld.strip(), vals))
 
     series: Dict[str, pd.Series] = {}
     for name, fields in blocks.items():
+        # A duplicate field label under the same name (e.g. two genuine
+        # "Close" columns) is a data-layout surprise, not something to
+        # silently pick a winner for.
+        labels = [f for f, _ in fields]
+        if len(labels) != len(set(labels)):
+            dupes = sorted({l for l in labels if labels.count(l) > 1})
+            raise ValueError(f"{path} [{sheet}]: series '{name}' has duplicate "
+                             f"field label(s) {dupes} -- cannot tell which column is which")
         if len(fields) == 1:
             fld, vals = fields[0]
             series[name] = pd.Series(vals.values, index=dates.values)
@@ -108,6 +124,39 @@ def load_banner_workbook(path: str, sheet="Sheet1") -> Tuple[pd.DataFrame, Dict[
         },
     }
     return df, prov
+
+
+def load_close_only(path: str, sheets=None) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Load one or more sheets of a `load_banner_workbook`-shaped file, keep
+    only each series' Close field, and return one column per series named
+    plainly (no " Close" suffix) -- what a ranking/momentum strategy wants:
+    one price per tradable name, not every OHLC/PE/PB field.
+
+    `sheets=None` autodetects every sheet in the workbook.
+    """
+    import openpyxl
+    if sheets is None:
+        wb = openpyxl.load_workbook(path, read_only=True)
+        sheets = wb.sheetnames
+        wb.close()
+
+    frames = []
+    prov = {"loader": "load_close_only", "path": path, "sha256": file_sha256(path), "sheets": {}}
+    for sh in sheets:
+        df, sub_prov = load_banner_workbook(path, sheet=sh)
+        close_cols = {c: c[:-len(" Close")] for c in df.columns if c.endswith(" Close")}
+        bare_cols = {c: c for c in df.columns if " " not in c or not any(
+            c.endswith(f" {f}") for f in ("Open", "High", "Low", "Close", "PE", "PB"))}
+        keep = {**close_cols, **bare_cols}
+        frames.append(df[list(keep.keys())].rename(columns=keep))
+        prov["sheets"][sh] = sub_prov
+
+    merged = pd.concat(frames, axis=1)
+    merged = merged.loc[:, ~merged.columns.duplicated(keep="first")]
+    prov["n_series"] = int(merged.shape[1])
+    prov["date_min"] = str(merged.index.min().date())
+    prov["date_max"] = str(merged.index.max().date())
+    return merged, prov
 
 
 def audit_frame(df: pd.DataFrame) -> pd.DataFrame:
