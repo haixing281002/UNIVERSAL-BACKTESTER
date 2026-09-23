@@ -55,3 +55,19 @@ def max_abs_move_flag(close: pd.Series, window: int = 90, threshold: float = 0.1
     """True where any single-day move over the trailing window exceeded
     `threshold` in absolute value -- a gap/quality disqualifier."""
     return close.pct_change().abs().rolling(window).max() > threshold
+
+
+def atr(high: pd.Series, low: pd.Series, close: pd.Series, window: int = 20) -> pd.Series:
+    """Average True Range: rolling mean of True Range = max(high-low,
+    |high-prev_close|, |low-prev_close|). Needs genuine High/Low data --
+    there is no way to approximate ATR from Close alone that isn't
+    misleading, so don't call this if your price file only has Close."""
+    prev_close = close.shift(1)
+    tr = np.maximum(high - low, np.maximum((high - prev_close).abs(), (low - prev_close).abs()))
+    return tr.rolling(window).mean()
+
+
+def regime_filter(benchmark_close: pd.Series, window: int = 200) -> pd.Series:
+    """True on days the benchmark closes above its own trailing SMA --
+    a common "risk-on" gate for blocking new entries in a downtrend."""
+    return benchmark_close > sma(benchmark_close, window)

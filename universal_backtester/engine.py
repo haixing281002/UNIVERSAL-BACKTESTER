@@ -28,12 +28,38 @@ class LookaheadError(RuntimeError):
     """Raised by assert_causal when a signal appears to know the future."""
 
 
+_WEEKDAY_FREQS = {"weekly_mon": 0, "weekly_tue": 1, "weekly_wed": 2,
+                  "weekly_thu": 3, "weekly_fri": 4}
+
+
 def rebalance_dates(index: pd.DatetimeIndex, freq: str) -> pd.DatetimeIndex:
-    """Trading dates on which a rebalance occurs, using the LAST trading day
-    of each period present in the data -- never a calendar date that may not
-    actually trade."""
+    """Trading dates on which a rebalance occurs.
+
+    "weekly"/"monthly"/"quarterly"/"annual" use the LAST trading day of each
+    period present in the data -- never a calendar date that may not
+    actually trade. Note "weekly" this way lands on whatever the last
+    trading day of the ISO week happens to be (usually Friday) -- if a
+    strategy is specified as "trade on Wednesday" (a common paper
+    convention), that is a DIFFERENT schedule, not "weekly" with extra
+    steps: use "weekly_wed" (or _mon/_tue/_thu/_fri) instead, which picks,
+    within each week, the trading day closest to that weekday -- the
+    weekday itself when it traded, otherwise the nearest trading day
+    (ties broken toward the earlier day in the week).
+    """
     if freq == "daily":
         return index
+    if freq in _WEEKDAY_FREQS:
+        target = _WEEKDAY_FREQS[freq]
+        s = pd.Series(index, index=index)
+        per = index.to_period("W")
+
+        def pick(grp: pd.Series) -> pd.Timestamp:
+            wd = grp.index.weekday
+            dist = np.abs(wd - target)
+            return grp.index[int(np.argmin(dist))]
+
+        picked = s.groupby(per).apply(pick)
+        return pd.DatetimeIndex(sorted(picked.values))
     codes = {"weekly": "W", "monthly": "M", "quarterly": "Q", "annual": "Y"}
     if freq not in codes:
         raise ValueError(f"unsupported rebalance frequency '{freq}'")
@@ -119,15 +145,30 @@ class Backtester:
         rebalance: str = "monthly",
         alpha: Optional[pd.DataFrame] = None,
         vols: Optional[pd.DataFrame] = None,
+        regime: Optional[pd.Series] = None,
         rf_horizon_days: int = 21,
         name: str = "strategy",
         warmup: int = 0,
     ) -> BacktestResult:
+        """`regime`, if given, is a boolean Series (any index; reindexed to
+        the price index) meaning "new buys allowed today" -- e.g. a
+        benchmark's price above its own trailing moving average. It is
+        causally shifted exactly like every other signal. When False on a
+        rebalance date, the allocator sees `ctx.buys_allowed=False`: a
+        CrossSectional-family allocator will still SELL a name that no
+        longer qualifies (falls out of rank/eligibility), because that is a
+        rule about the name itself, but will not add any new name or resize
+        a survivor to fill the freed cash -- matching a common paper pattern
+        of "block new entries in a downtrend, don't force an exit because of
+        it." A strategy that ignores `ctx.buys_allowed` (most do) is
+        unaffected by passing this.
+        """
         idx = self.prices.index
         rebal = set(rebalance_dates(idx, rebalance))
 
         alp = self._shift_causal(alpha)[self.assets] if alpha is not None else None
         vol_shift = self._shift_causal(vols[self.assets]) if vols is not None else None
+        regime_shift = (self._shift_causal(regime.reindex(idx)) if regime is not None else None)
 
         elig_arr = None
         if self.membership is not None:
@@ -182,6 +223,9 @@ class Backtester:
                     eligible=(elig_arr[i] if elig_arr is not None else None),
                     vols=(vol_shift.iloc[i].to_numpy(dtype=float)
                           if vol_shift is not None else None),
+                    buys_allowed=(bool(regime_shift.iloc[i])
+                                 if regime_shift is not None and pd.notna(regime_shift.iloc[i])
+                                 else True),
                     rf_period=float(rf_period.iloc[i]),
                     extras={},
                 )
@@ -218,7 +262,10 @@ class Backtester:
         meta = {"template": allocator.template_name, "params": allocator.params,
                 "rebalance": rebalance, "lag_days": self.lag_days,
                 "spread_bps": self.half_spread * 2 * 1e4, "allow_cash": self.allow_cash,
-                "n_rebalances": len(used_rebals), "warmup_days": warmup}
+                "n_rebalances": len(used_rebals), "warmup_days": warmup,
+                "regime_gated": regime is not None}
+        if regime_shift is not None:
+            meta["mean_buys_allowed"] = float(regime_shift.reindex(idx).fillna(True).astype(bool).mean())
         if elig_arr is not None:
             meta["changing_universe"] = True
             meta["forced_exits"] = n_forced

@@ -42,7 +42,8 @@ class AllocatorContext:
     current_weights: np.ndarray
     alpha: Optional[np.ndarray] = None       # ranking / expected-return score
     eligible: Optional[np.ndarray] = None    # bool: investable, as known on this date
-    vols: Optional[np.ndarray] = None        # per-asset trailing vol
+    vols: Optional[np.ndarray] = None        # per-asset trailing vol (or ATR%, see allocator)
+    buys_allowed: bool = True                # False = a "regime filter" is blocking NEW entries
     rf_period: float = 0.0
     extras: Optional[Dict[str, Any]] = None
 
@@ -64,6 +65,24 @@ class Allocator:
 
     def describe(self) -> Dict[str, Any]:
         return {"template": self.template_name, "assets": self.assets, "params": self.params}
+
+
+def _sell_only(current_weights: np.ndarray, chosen_idx: np.ndarray) -> np.ndarray:
+    """When new buys are blocked (a regime filter is negative): zero out any
+    currently-held name that fell out of the qualifying set (`chosen_idx`)
+    -- a real, name-specific sell trigger still fires -- but never add a
+    name that wasn't already held, and never resize a survivor. The cash
+    freed by a sell is simply left in cash, not redistributed. This is the
+    common paper pattern "block new entries in a downtrend, don't force an
+    exit because of it."
+    """
+    target = current_weights.copy()
+    chosen_set = set(int(i) for i in chosen_idx)
+    held_idx = np.flatnonzero(target > 1e-12)
+    for i in held_idx:
+        if int(i) not in chosen_set:
+            target[i] = 0.0
+    return target
 
 
 @register("equal_weight")
@@ -135,6 +154,9 @@ class CrossSectional(Allocator):
         chosen = idx[order[:k]]
         self._held.append(k)
 
+        if not ctx.buys_allowed:
+            return _sell_only(ctx.current_weights, chosen)
+
         w = np.zeros(self.n)
         if self.weighting == "equal":
             w[chosen] = 1.0 / k
@@ -192,3 +214,82 @@ class TimeSeriesMomentum(Allocator):
         else:
             w = signal
         return w / w.sum() if w.sum() > 0 else np.zeros(self.n)
+
+
+@register("atr_risk_parity")
+class ATRRiskParity(Allocator):
+    """Literal Clenow-style position sizing, as a weight.
+
+    The book's formula is `shares = AccountValue * risk_factor / ATR20`,
+    i.e. a target dollar-risk-per-position (`risk_factor` of NAV) sized
+    inversely to that name's own volatility (ATR). Collapsed to a weight:
+
+        weight_i = risk_factor / atr_pct_i        (atr_pct = ATR / price)
+
+    Unlike `cross_sectional`'s "inverse_vol" weighting, this is NOT
+    renormalised to sum to 1 across the selected names. If the raw total
+    exceeds 1 it is scaled down (this engine is long-only, unleveraged); if
+    it's LESS than 1, the shortfall is deliberately left as cash. That cash
+    drag is a real, documented property of this sizing rule when few names
+    are held or their volatility is low relative to `risk_factor` -- not a
+    bug to normalise away.
+
+    `ctx.vols` here must be each name's ATR expressed as a FRACTION of its
+    own price (ATR / price), not an absolute vol number.
+    """
+    requires = ("alpha", "eligible", "vols")
+
+    def __init__(self, assets, n_hold=None, quantile=None, risk_factor=0.001,
+                 max_weight=None, ascending=False, min_names=5, **kw):
+        super().__init__(assets, n_hold=n_hold, quantile=quantile, risk_factor=risk_factor,
+                         max_weight=max_weight, ascending=ascending, min_names=min_names, **kw)
+        if (n_hold is None) == (quantile is None):
+            raise ValueError("atr_risk_parity needs exactly one of n_hold or quantile")
+        self.n_hold = int(n_hold) if n_hold is not None else None
+        self.quantile = float(quantile) if quantile is not None else None
+        self.risk_factor = float(risk_factor)
+        self.max_weight = float(max_weight) if max_weight is not None else None
+        self.ascending = bool(ascending)
+        self.min_names = int(min_names)
+        self._skipped = 0
+        self._held: List[int] = []
+        self._cash_shortfall: List[float] = []
+
+    def target_weights(self, ctx: AllocatorContext) -> np.ndarray:
+        score = np.asarray(ctx.alpha, dtype=float)
+        atr_pct = np.asarray(ctx.vols, dtype=float)
+        ok = (np.asarray(ctx.eligible, dtype=bool) & np.isfinite(score)
+              & np.isfinite(atr_pct) & (atr_pct > 0))
+        n_ok = int(ok.sum())
+
+        if n_ok < self.min_names:
+            self._skipped += 1
+            return ctx.current_weights.copy()
+
+        k = self.n_hold if self.n_hold is not None else max(1, int(round(self.quantile * n_ok)))
+        k = min(k, n_ok)
+
+        idx = np.flatnonzero(ok)
+        s = score[idx]
+        order = np.argsort(s if self.ascending else -s, kind="stable")
+        chosen = idx[order[:k]]
+        self._held.append(k)
+
+        if not ctx.buys_allowed:
+            return _sell_only(ctx.current_weights, chosen)
+
+        w = np.zeros(self.n)
+        w[chosen] = self.risk_factor / atr_pct[chosen]
+        if self.max_weight is not None:
+            w = np.minimum(w, self.max_weight)
+        total = w.sum()
+        self._cash_shortfall.append(max(0.0, 1.0 - total))
+        if total > 1.0:
+            w = w / total
+        return w
+
+    def diagnostics(self) -> Dict[str, Any]:
+        return {"rebalances_skipped_thin_universe": self._skipped,
+                "mean_names_held": (float(np.mean(self._held)) if self._held else 0.0),
+                "mean_cash_shortfall_from_sizing": (
+                    float(np.mean(self._cash_shortfall)) if self._cash_shortfall else 0.0)}

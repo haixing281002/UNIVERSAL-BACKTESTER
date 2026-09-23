@@ -126,13 +126,19 @@ def load_banner_workbook(path: str, sheet="Sheet1") -> Tuple[pd.DataFrame, Dict[
     return df, prov
 
 
-def load_close_only(path: str, sheets=None) -> Tuple[pd.DataFrame, Dict[str, Any]]:
-    """Load one or more sheets of a `load_banner_workbook`-shaped file, keep
-    only each series' Close field, and return one column per series named
-    plainly (no " Close" suffix) -- what a ranking/momentum strategy wants:
-    one price per tradable name, not every OHLC/PE/PB field.
+_KNOWN_FIELDS = ("Open", "High", "Low", "Close", "PE", "PB")
 
-    `sheets=None` autodetects every sheet in the workbook.
+
+def load_field_only(path: str, field: str = "Close", sheets=None) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Load one or more sheets of a `load_banner_workbook`-shaped file, keep
+    only each series' `field` column (default "Close"), and return one
+    column per series named plainly (no " Close"/" High"/... suffix) -- one
+    price (or High, or Low, ...) per tradable name.
+
+    `sheets=None` autodetects every sheet in the workbook. Call this once
+    per field you need (e.g. once for "Close", once for "High", once for
+    "Low" to build an ATR) -- each call re-reads the workbook, which is
+    cheap relative to actually computing anything on the result.
     """
     import openpyxl
     if sheets is None:
@@ -140,23 +146,37 @@ def load_close_only(path: str, sheets=None) -> Tuple[pd.DataFrame, Dict[str, Any
         sheets = wb.sheetnames
         wb.close()
 
+    suffix = f" {field}"
     frames = []
-    prov = {"loader": "load_close_only", "path": path, "sha256": file_sha256(path), "sheets": {}}
+    prov = {"loader": "load_field_only", "field": field, "path": path,
+            "sha256": file_sha256(path), "sheets": {}}
     for sh in sheets:
         df, sub_prov = load_banner_workbook(path, sheet=sh)
-        close_cols = {c: c[:-len(" Close")] for c in df.columns if c.endswith(" Close")}
-        bare_cols = {c: c for c in df.columns if " " not in c or not any(
-            c.endswith(f" {f}") for f in ("Open", "High", "Low", "Close", "PE", "PB"))}
-        keep = {**close_cols, **bare_cols}
-        frames.append(df[list(keep.keys())].rename(columns=keep))
+        matched = {c: c[:-len(suffix)] for c in df.columns if c.endswith(suffix)}
+        # A series with only ONE field total (no OHLC breakdown) keeps its
+        # bare name in load_banner_workbook -- only usable as "Close".
+        bare_cols = {}
+        if field == "Close":
+            bare_cols = {c: c for c in df.columns if " " not in c or not any(
+                c.endswith(f" {f}") for f in _KNOWN_FIELDS)}
+        keep = {**matched, **bare_cols}
+        if keep:
+            frames.append(df[list(keep.keys())].rename(columns=keep))
         prov["sheets"][sh] = sub_prov
 
+    if not frames:
+        raise ValueError(f"{path}: no series had a '{field}' field across sheets {sheets}")
     merged = pd.concat(frames, axis=1)
     merged = merged.loc[:, ~merged.columns.duplicated(keep="first")]
     prov["n_series"] = int(merged.shape[1])
     prov["date_min"] = str(merged.index.min().date())
     prov["date_max"] = str(merged.index.max().date())
     return merged, prov
+
+
+def load_close_only(path: str, sheets=None) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Backward-compatible alias: `load_field_only(path, field="Close", ...)`."""
+    return load_field_only(path, field="Close", sheets=sheets)
 
 
 def audit_frame(df: pd.DataFrame) -> pd.DataFrame:

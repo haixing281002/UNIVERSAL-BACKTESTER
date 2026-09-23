@@ -123,6 +123,31 @@ stocks**, so this is a sleeve-rotation strategy, not a stock-picker, however
 the ranking logic is dressed up. Swap in your own file any time; nothing in
 the engine or allocators is tied to this data.
 
+## How closely the example follows Clenow's actual rules
+
+| Rule (the paper's forensic extract) | This example |
+|---|---|
+| 90-day exp-regression slope × R² ranking | Matches |
+| Above 100-day MA to qualify | Matches |
+| Disqualify >15% move in trailing 90 days | Matches |
+| Trade on Wednesday | Matches (`rebalance="weekly_wed"` — falls back to the nearest trading day on a Wednesday holiday) |
+| Hold the top 20% of the ranking | Matches (`quantile=0.20`) |
+| Size by `AccountValue × risk_factor / ATR20` (risk parity) | Matches (`atr_risk_parity` allocator, real High/Low from the bundled feed) |
+| New buys blocked when benchmark < 200-DMA; existing names held, not force-sold | Matches (`regime=` → `ctx.buys_allowed`) |
+| No stop-loss | Matches (trivially — neither has one) |
+| ~500 individual S&P 500 stocks | **Does not match** — 10 Indian index series instead, no stock data exists here |
+| Biweekly separate resize step | Approximated — recomputes the full ATR target every Wednesday instead of every second one (more frequent, not less) |
+| Checks/trades ONLY on Wednesday | Minor deviation — a 100-DMA/gap sell trigger can act on the first day it's causally knowable, which need not be a Wednesday |
+
+Passing this rule set through the real engine, instead of equal-weighting
+with no regime filter (an earlier, looser version of this example), changes
+the headline number a lot: CAGR drops from ~14%/year to ~2.8%/year, because
+ATR risk-parity sizing on a smooth, diversified index (low ATR relative to
+price) produces heavy, real cash drag — ~86% of NAV sits in cash on average.
+That's not a bug to fix; it's what the paper's own sizing formula does when
+translated onto this instrument set, and it's worth sitting with before
+concluding anything about whether the idea "works" here.
+
 ## Tests
 
 ```bash
