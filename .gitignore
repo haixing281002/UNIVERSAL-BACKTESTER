@@ -6,3 +6,7 @@ __pycache__/
 build/
 dist/
 .ipynb_checkpoints/
+
+# Run artifacts -- generated fresh by examples/momentum_rotation.py each run,
+# not something to check in.
+trade_log.csv

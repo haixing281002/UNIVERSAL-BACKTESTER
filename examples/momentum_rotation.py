@@ -32,7 +32,7 @@ import pandas as pd
 
 sys.path.insert(0, str(__file__.rsplit("/", 2)[0]))  # allow running without `pip install -e .`
 
-from universal_backtester import Backtester, build_allocator, assert_causal, LookaheadError
+from universal_backtester import Backtester, build_allocator, assert_causal, LookaheadError, derive_trade_log
 from universal_backtester.data import load_wide_csv, load_banner_workbook, load_close_only
 from universal_backtester.metrics import metrics_table, render_table
 from universal_backtester.signals import rolling_regression_momentum, sma, max_abs_move_flag
@@ -118,10 +118,20 @@ def main():
 
     tbl = metrics_table([result])
     print("\n" + "=" * 70)
-    print("CORRECT (causally-shifted, 30bp cost)")
+    print("CORRECT (causally-shifted, 30bp cost, LONG-ONLY -- no shorting, no leverage:")
+    print("the engine clips every target weight at >= 0 and caps total exposure at")
+    print("100%; whatever isn't allocated to a position sits in cash)")
     print("=" * 70)
     print(render_table(tbl))
     print(f"mean cash weight: {result.cash_weight.mean():.1%}")
+
+    trade_log = derive_trade_log(result)
+    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "trade_log.csv")
+    trade_log.to_csv(log_path, index=False)
+    print(f"\n{len(trade_log)} buy/sell events across {result.meta['n_rebalances']} rebalance dates "
+          f"-- full log written to {os.path.normpath(log_path)}")
+    print("Last 15 trades:")
+    print(trade_log.tail(15).to_string(index=False))
 
     # -- deliberately-broken same-bar replay, for comparison only ----------
     wednesdays = close.index[close.index.weekday == 2]

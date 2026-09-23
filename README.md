@@ -89,6 +89,21 @@ prints metrics for both the causally-correct run and, for comparison, a
 deliberately-broken same-bar replay — so you can see the size of the leak on
 your own data before trusting any number.
 
+## Where to see what it bought and sold
+
+Running the example writes a full buy/sell log to `trade_log.csv` (repo
+root), one row per `(date, asset)` where the position changed on a rebalance
+date -- action (BUY/SELL), weight before, weight after. It's derived from
+the engine's daily weight path via `universal_backtester.derive_trade_log`,
+which you can call on any `BacktestResult` the same way. This is a
+**weight-based** engine, not a shares-and-cash ledger: "buying an index"
+here means allocating a fraction of NAV to a notional unit that tracks that
+index's price 1:1 (no tracking error, no expense ratio, no minimum lot
+size) -- see "Design boundary" below for what that does and doesn't let you
+claim. The strategy is **long-only with no leverage**: `engine.py` clips
+every target weight at `>= 0` and caps total exposure at 100%, structurally
+-- there is no parameter that allows shorting or borrowing.
+
 ## Bundled data feed (hardcoded default, as of now)
 
 `data/Indices_Historical_Data.xlsx` is checked into this repo and is the

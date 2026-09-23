@@ -13,10 +13,12 @@ See examples/momentum_rotation.py for a full worked strategy.
 """
 from universal_backtester.engine import Backtester, BacktestResult, LookaheadError, assert_causal
 from universal_backtester.allocators import Allocator, AllocatorContext, build_allocator, list_allocators
+from universal_backtester.reporting import derive_trade_log
 
 __all__ = [
     "Backtester", "BacktestResult", "LookaheadError", "assert_causal",
     "Allocator", "AllocatorContext", "build_allocator", "list_allocators",
+    "derive_trade_log",
 ]
 
 __version__ = "0.1.0"
