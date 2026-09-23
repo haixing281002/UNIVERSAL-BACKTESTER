@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "universal-backtester"
+version = "0.1.0"
+description = "A small, causally-correct, long-only backtesting engine for cross-sectional and single/multi-asset strategies."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "openpyxl>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "matplotlib>=3.7"]
+
+[tool.setuptools.packages.find]
+include = ["universal_backtester*"]
