@@ -59,12 +59,15 @@ print(compute_metrics(result))
 | Module | What it does |
 |---|---|
 | `engine.py` | `Backtester` — the causal accounting loop, `assert_causal()` tripwire |
-| `allocators.py` | `equal_weight`, `cross_sectional` (rank/select/weight), `time_series_momentum` |
-| `signals.py` | Rolling-regression momentum score, SMA, realized vol, gap-move flag — all raw/unshifted, by design |
-| `data.py` | `load_wide_csv`, `load_banner_workbook` (multi-series Excel exports), `audit_frame` (data-quality checks) |
+| `allocators.py` | `equal_weight`, `cross_sectional` (rank/select/weight), `time_series_momentum`, `atr_risk_parity` |
+| `signals.py` | Rolling-regression momentum score, SMA, realized vol, ATR, gap-move flag, regime filter — all raw/unshifted, by design |
+| `data.py` | `load_wide_csv`, `load_banner_workbook` / `load_field_only` (multi-series Excel exports), `audit_frame` (data-quality checks) |
 | `metrics.py` | CAGR, vol, Sharpe, max drawdown, turnover |
+| `validation.py` | Block-bootstrap Sharpe CI, deflated Sharpe ratio — is a result skill or luck |
+| `tearsheet.py` | 27-metric risk/return tearsheet: vol split, drawdown, Sharpe/Treynor/Sortino/Calmar/Sterling/Omega, capture ratios, VaR/CVaR, skew/kurtosis — see below |
+| `reporting.py` | `derive_trade_log` — reconstructs discrete BUY/SELL events from the daily weight path |
 | `examples/momentum_rotation.py` | A full worked cross-sectional momentum strategy, generic over whatever price file you point it at |
-| `tests/test_causality.py` | Proves the engine's causal guarantee and survivorship handling — plants the bias, confirms it's caught |
+| `tests/` | 40 tests: causality + survivorship (`test_causality.py`), weekday schedule + regime gate (`test_regime_and_schedule.py`), bootstrap/deflated Sharpe (`test_validation.py`), all 27 tearsheet metrics (`test_tearsheet.py`) |
 
 ## Design boundary — what this deliberately does NOT do
 
@@ -147,6 +150,15 @@ price) produces heavy, real cash drag — ~86% of NAV sits in cash on average.
 That's not a bug to fix; it's what the paper's own sizing formula does when
 translated onto this instrument set, and it's worth sitting with before
 concluding anything about whether the idea "works" here.
+
+## The full tearsheet
+
+`examples/momentum_rotation.py` prints a 27-metric tearsheet (`universal_backtester.tearsheet`) whenever it has a designated benchmark column (the bundled feed's NIFTY 500):
+volatility split (annualized, positive/negative), max drawdown, average annual max drawdown, Sharpe, Treynor, Sortino, Calmar, Sterling, Omega, Gain-to-Pain, Tail Ratio, Alpha (Bloomberg-adjusted beta), Tracking Error, conditional returns on up/down benchmark days, Upside/Downside/Capture/Extreme Capture ratios, skewness, kurtosis, and 95%/99% VaR and CVaR.
+
+**Read this before trusting any benchmark-relative number in it.** Every NIFTY 500 series in this repo is a *price-return* index — dividends excluded — used as a stand-in for the *Total Return Index* that "vs. Nifty 500" normally means. A price-return benchmark is a systematically weaker comparison, understating the true benchmark by roughly its dividend yield (~1.3–1.5%/year for Indian large/mid caps). Alpha, tracking error, capture ratios and the conditional-return pair are all computed against that weaker benchmark, which flatters the strategy relative to a true TRI comparison by about that much. They're fine for comparing two runs against the *same* proxy; not fine as a standalone "beat the index by X" claim.
+
+Capture ratios compound **monthly** returns of the up/down subset, matching standard (Morningstar-style) practice — compounding a non-contiguous subset of *daily* returns back-to-back distorts the number by an order of magnitude or more (confirmed while building this: a naive daily version turned a ~150%-expected capture ratio into ~2400%). Even at monthly granularity, compounding is convex in a scale factor — a portfolio at a clean 1.5x the benchmark every month will show capture ratios noticeably *above* 150%, not exactly 150% — a real property of the metric, not a bug; see the tests in `test_tearsheet.py` for the worked proof.
 
 ## Tests
 

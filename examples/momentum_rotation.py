@@ -68,6 +68,7 @@ from universal_backtester.data import load_wide_csv, load_banner_workbook, load_
 from universal_backtester.metrics import metrics_table, render_table
 from universal_backtester.signals import rolling_regression_momentum, sma, max_abs_move_flag, atr, regime_filter
 from universal_backtester.validation import bootstrap_sharpe_ci, deflated_sharpe_from_returns
+from universal_backtester.tearsheet import compute_tearsheet, render_tearsheet
 
 REG_WINDOW = 90
 SMA_WINDOW = 100          # 100-day trend qualifier
@@ -228,6 +229,16 @@ def main():
     print(f"Deflated Sharpe Ratio (rough, n_trials~{N_TRIALS_ROUGH_ESTIMATE} guessed, not logged): "
           f"{dsr:.1%} probability this Sharpe reflects genuine skill rather than the best "
           f"of the variations tried along the way. Below ~95% means: not yet convincing.")
+
+    if benchmark_col:
+        print("\n" + "-" * 70)
+        print(f"FULL TEARSHEET -- benchmark: {benchmark_col}")
+        print("-" * 70)
+        sheet = compute_tearsheet(result, close_full[benchmark_col])
+        print(render_tearsheet(sheet))
+    else:
+        print("\n(no benchmark column declared for this override file -- "
+              "full tearsheet skipped; only the core metrics table above applies)")
 
     trade_log = derive_trade_log(result)
     log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "trade_log.csv")
