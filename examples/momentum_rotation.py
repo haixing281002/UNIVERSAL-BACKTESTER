@@ -67,6 +67,7 @@ from universal_backtester import Backtester, build_allocator, assert_causal, Loo
 from universal_backtester.data import load_wide_csv, load_banner_workbook, load_field_only
 from universal_backtester.metrics import metrics_table, render_table
 from universal_backtester.signals import rolling_regression_momentum, sma, max_abs_move_flag, atr, regime_filter
+from universal_backtester.validation import bootstrap_sharpe_ci, deflated_sharpe_from_returns
 
 REG_WINDOW = 90
 SMA_WINDOW = 100          # 100-day trend qualifier
@@ -205,6 +206,28 @@ def main():
     if benchmark_col:
         print(f"fraction of history with new buys allowed (benchmark > {SMA_REGIME}-DMA): "
               f"{result.meta.get('mean_buys_allowed', float('nan')):.1%}")
+
+    print("\n" + "-" * 70)
+    print("STATISTICAL RIGOR -- is this Sharpe ratio trustworthy, or noise?")
+    print("-" * 70)
+    boot = bootstrap_sharpe_ci(result.returns, block_size=20, n_resamples=1000, seed=0)
+    print(f"Sharpe ratio, 90% block-bootstrap CI: [{boot.ci_low:.2f}, {boot.ci_high:.2f}] "
+          f"(point estimate {boot.point_estimate:.2f}, {boot.fraction_positive:.0%} of "
+          f"resamples positive)")
+    # N_TRIALS here is a rough, human-counted tally of the parameter/design
+    # choices actually varied while building this example (universe size:
+    # 7/10/20 names; weighting: equal/inverse-vol/ATR; top quantile:
+    # 20%/30%; rebalance: weekly/weekly_wed; regime gate: on/off; cost:
+    # 10bp/30bp) -- NOT a rigorously logged trial count the way BACKTESTER's
+    # own trials_for_family() tracks it. Treat this DSR as illustrative:
+    # the honest number requires logging every variation as you try it,
+    # which this script does not yet do.
+    N_TRIALS_ROUGH_ESTIMATE = 10
+    dsr = deflated_sharpe_from_returns(result.returns, n_trials=N_TRIALS_ROUGH_ESTIMATE,
+                                       trial_sharpe_std=0.3)
+    print(f"Deflated Sharpe Ratio (rough, n_trials~{N_TRIALS_ROUGH_ESTIMATE} guessed, not logged): "
+          f"{dsr:.1%} probability this Sharpe reflects genuine skill rather than the best "
+          f"of the variations tried along the way. Below ~95% means: not yet convincing.")
 
     trade_log = derive_trade_log(result)
     log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "trade_log.csv")
